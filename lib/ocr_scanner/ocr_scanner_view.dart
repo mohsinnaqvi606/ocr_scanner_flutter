@@ -12,7 +12,7 @@ class OcrScannerView extends StatelessWidget {
   Widget build(BuildContext context) {
     ocrScannerViewModel.setContext(context);
     return Scaffold(
-      backgroundColor: Colors.primaries[3],
+      backgroundColor: Colors.lightBlueAccent[700],
       appBar: AppBar(
         title: const Text('OCR Scanner'),
         centerTitle: true,
