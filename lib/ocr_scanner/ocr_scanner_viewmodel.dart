@@ -1,47 +1,132 @@
-import 'dart:developer';
 import 'dart:io';
-import 'dart:math';
 import 'dart:ui';
 
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:camera/camera.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:ocr_scanner_to_browser/main.dart';
 import 'package:ocr_scanner_to_browser/ocr_scanner/global_variables.dart';
-import 'package:ocr_scanner_to_browser/ocr_scanner/painter_view.dart';
-import 'package:ocr_scanner_to_browser/ocr_scanner/second_screen_view.dart';
 
 class OcrScannerViewModel extends GetxController with WidgetsBindingObserver {
   RxBool isCameraInitialized = false.obs;
-  CameraController? cameraController;
+  late CameraController cameraController;
   TextDetector textDetector = GoogleMlKit.vision.textDetector();
   bool isBusy = false;
-  CustomPaint? customPaint;
+  RxString text = 'Not Scanned'.obs;
+  late BuildContext context;
+
+  setContext(BuildContext context) async {
+    this.context = context;
+    // await startLiveFeed();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+
+    if (state == AppLifecycleState.resumed) {
+      startLiveFeed();
+    } else if (state == AppLifecycleState.inactive) {
+      stopLiveFeed();
+    }
+
+  }
+
+  @override
+  void onInit() async {
+    super.onInit();
+    await startLiveFeed();
+
+    WidgetsBinding.instance?.addObserver(this);
+  }
 
   @override
   void onReady() {
     super.onReady();
-
-    cameraController = CameraController(
-      cameras[0],
-      ResolutionPreset.ultraHigh,
-      enableAudio: false,
-    );
-
-    cameraController?.initialize().then((_) {
-      isCameraInitialized.value = true;
-    });
+    //  startLiveFeed();
+    print('onReady');
   }
 
   @override
-  void onClose() {
+  void onClose() async {
+    await stopLiveFeed();
+    WidgetsBinding.instance?.removeObserver(this);
     super.onClose();
-    cameraController?.dispose();
-    //   textDetector.close();
   }
 
-  Future<void> processImage(InputImage inputImage, BuildContext context) async {
+  Future startLiveFeed() async {
+    if (isCameraInitialized.value) return;
+    print('startLiveFeed.....');
+    final camera = cameras[0];
+    cameraController = CameraController(
+      camera,
+      ResolutionPreset.ultraHigh,
+      enableAudio: false,
+    );
+    cameraController.initialize().then((_) {
+      isCameraInitialized.value = true;
+      cameraController.startImageStream(processCameraImage);
+    });
+  }
+
+  Future stopLiveFeed() async {
+    isCameraInitialized.value = false;
+    await cameraController.stopImageStream();
+    await cameraController.dispose();
+  }
+
+  Future processCameraImage(CameraImage image) async {
+    if (!isCameraInitialized.value) return;
+    final WriteBuffer allBytes = WriteBuffer();
+    for (Plane plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    final bytes = allBytes.done().buffer.asUint8List();
+
+    final Size imageSize =
+        Size(image.width.toDouble(), image.height.toDouble());
+
+    GlobalVariables.absoluteImageSize = imageSize;
+
+    final camera = cameras[0];
+    final imageRotation =
+        InputImageRotationMethods.fromRawValue(camera.sensorOrientation) ??
+            InputImageRotation.Rotation_0deg;
+
+    final inputImageFormat =
+        InputImageFormatMethods.fromRawValue(image.format.raw) ??
+            InputImageFormat.NV21;
+
+    GlobalVariables.rotation = imageRotation;
+
+    final planeData = image.planes.map(
+      (Plane plane) {
+        return InputImagePlaneMetadata(
+          bytesPerRow: plane.bytesPerRow,
+          height: plane.height,
+          width: plane.width,
+        );
+      },
+    ).toList();
+
+    final inputImageData = InputImageData(
+      size: imageSize,
+      imageRotation: imageRotation,
+      inputImageFormat: inputImageFormat,
+      planeData: planeData,
+    );
+
+    final inputImage =
+        InputImage.fromBytes(bytes: bytes, inputImageData: inputImageData);
+
+    processImage(inputImage);
+  }
+
+  Future<void> processImage(InputImage inputImage) async {
+    if (!isCameraInitialized.value) return;
     if (isBusy) return;
     isBusy = true;
     final recognisedText = await textDetector.processImage(inputImage);
@@ -53,73 +138,37 @@ class OcrScannerViewModel extends GetxController with WidgetsBindingObserver {
 
       if (recognisedText.blocks.isNotEmpty && recognisedText.text.length > 1) {
         for (final block in recognisedText.blocks) {
-          if (checkCornerPoints(block.rect)) {
-            Var.txt = block.text;
-            Get.off(() => SecondView(), arguments: {'txt': block.text});
+          if (await checkCornerPoints(block.rect)) {
+            isCameraInitialized.value = false;
             isBusy = true;
+
+            String url = 'https://www.google.com/search?q=' +
+                recognisedText.blocks.first.text.trim();
+            await canLaunch(url)
+                ? await launch(url)
+                : throw 'Could not launch $url';
+
+            break;
           }
         }
-
-        // Var.txt = recognisedText.text;
-        // Navigator.pushAndRemoveUntil(
-        //     context,
-        //     MaterialPageRoute(builder: (BuildContext context) => SecondView()),
-        //     (Route<dynamic> route) => false);
       }
-
-      // for (final block in recognisedText.blocks) {
-      //   print(
-      //       '**********************************************************************************************************************');
-      //   print(
-      //       'Top : ${block.rect.top}\nBottom : ${block.rect.bottom}\nleft : ${block.rect.left}\nRight : ${block.rect.right}');
-      //
-      //   print('Corners : ${block.cornerPoints}');
-      //   print(
-      //       '#######################################################################################################################');
-      // }
-
-      //Check Text and Open browser
-      // if (recognisedText.blocks.isNotEmpty) {
-      //   if (recognisedText.blocks.first.text.length > 15) {
-      //     if (recognisedText.blocks.first.text.startsWith('https://') ||
-      //         recognisedText.blocks.first.text.startsWith('http://')) {
-      //       await canLaunch(recognisedText.blocks.first.text)
-      //           ? await launch(recognisedText.blocks.first.text)
-      //           : throw 'Could not launch ${recognisedText.blocks.first.text}';
-      //     } else {
-      //       String url = 'https://www.google.com/search?q=' +
-      //           recognisedText.blocks.first.text.trim();
-      //       await canLaunch(url)
-      //           ? await launch(url)
-      //           : throw 'Could not launch $url';
-      //     }
-      //   }
-      // } else {
-      //   log('Noting Found');
-      // }
 
       print('*******************************************************');
     } else {
-      customPaint = null;
+      isBusy = false;
     }
     isBusy = false;
   }
 
-  bool checkCornerPoints(Rect rect) {
+  Future<bool> checkCornerPoints(Rect rect) async {
     double x1 = Get.width * .077;
-    double y1 = (Get.height * .411) - 70;
+    double y1 = Get.height * .31;
     double x2 = Get.width - (Get.width * .077);
-    double y2 = (Get.height - (Get.height * .287)) - 28;
+    double y2 = (Get.height - (Get.height * .30));
 
     bool result = false;
 
-    //1st point  => top left
-    //2nd point  => top right
-    //3rd point  => bottom left
-    //4th point  => bottom right
-
     print('(x1: $x1, y1: $y1)  (x2: $x2, y2: $y2)');
-    //  print(points);
 
     final left = translateX(rect.left, GlobalVariables.rotation,
         GlobalVariables.size, GlobalVariables.absoluteImageSize);
@@ -138,47 +187,6 @@ class OcrScannerViewModel extends GetxController with WidgetsBindingObserver {
         (bottom >= y1 && bottom <= y2)) {
       result = true;
     }
-
-    // //First point
-    // if (points[0].dx >= x1 &&
-    //     points[0].dy >= y1 &&
-    //     points[0].dx <= x2 &&
-    //     points[0].dy <= y2) {
-    //   result = true;
-    // } else {
-    //   result = false;
-    // }
-    //
-    // //2nd point
-    // if (points[1].dx >= x1 &&
-    //     points[1].dy >= y1 &&
-    //     points[1].dx <= x2 &&
-    //     points[1].dy <= y2) {
-    //   result = true;
-    // } else {
-    //   result = false;
-    // }
-    //
-    // //3rd point
-    // if (points[2].dx >= x1 &&
-    //     points[2].dy >= y1 &&
-    //     points[2].dx <= x2 &&
-    //     points[2].dy <= y2) {
-    //   result = true;
-    // } else {
-    //   result = false;
-    // }
-    //
-    // //4th point
-    // if (points[3].dx >= x1 &&
-    //     points[3].dy >= y1 &&
-    //     points[3].dx <= x2 &&
-    //     points[3].dy <= y2) {
-    //   result = true;
-    // } else {
-    //   result = false;
-    // }
-
     return result;
   }
 }

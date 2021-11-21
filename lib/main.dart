@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:get/get.dart';
-import 'package:ocr_scanner_to_browser/ocr_scanner/ocr_scanner_view.dart';
+import 'package:ocr_scanner_to_browser/splash/splash_view.dart';
 
 List<CameraDescription> cameras = [];
 
@@ -19,12 +19,11 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       debugShowCheckedModeBanner: false,
-      home: OcrScannerView(),
+      home: SplashView(),
     );
   }
 }
 
-class Var{
+class Var {
   static String txt = '';
 }
-

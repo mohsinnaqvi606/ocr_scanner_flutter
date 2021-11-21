@@ -10,5 +10,5 @@ class GlobalVariables {
 
   static Size size = Size(Get.width, Get.height);
 
-  static Size absoluteImageSize = Size(0,0);
+  static Size absoluteImageSize = Size(0, 0);
 }
